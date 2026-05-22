@@ -21,6 +21,7 @@ from urllib.parse import urlparse, parse_qs, unquote_plus
 from config import INTEGRATION_SERVER, COLLEGES, MAX_COURSES_PER_STUDENT
 from college_client import CollegeRegistry
 from xml_utils import parse_courses_xml, parse_students_xml
+from course_aggregator import CourseAggregator
 
 
 class IntegrationHandler(BaseHTTPRequestHandler):
@@ -87,6 +88,7 @@ class IntegrationHandler(BaseHTTPRequestHandler):
             "/api/courses/shared":  self._handle_shared_courses,
             "/api/courses/all":     self._handle_all_courses,
             "/api/courses/college": self._handle_college_courses,
+            "/api/courses/aggregated": self._handle_aggregated_courses,
             "/api/students":        self._handle_all_students,
             "/api/students/college": self._handle_college_students,
             "/api/statistics":      self._handle_statistics,
@@ -223,6 +225,49 @@ class IntegrationHandler(BaseHTTPRequestHandler):
             self._send_xml(xml_data)
         else:
             self._send_json({"error": f"学院{cid}服务器不可用"}, 503)
+
+    # ================================================================
+    # GET /api/courses/aggregated — 去重聚合课程（新增）
+    #     ?shared_only=1  仅共享课程
+    #     ?college=A      筛选指定学院
+    # ================================================================
+    def _handle_aggregated_courses(self):
+        """使用CourseAggregator进行智能去重聚合"""
+        params = parse_qs(urlparse(self.path).query)
+        shared_only = params.get("shared_only", ["0"])[0] == "1"
+        filter_college = params.get("college", [None])[0]
+
+        aggr = CourseAggregator(registry)
+
+        if shared_only:
+            aggr.fetch_shared()
+        else:
+            aggr.fetch_all()
+
+        aggr.normalize().deduplicate()
+
+        stats = aggr.statistics()
+        courses = aggr.to_dict_list()
+
+        if filter_college and filter_college.upper() in COLLEGES:
+            cid = filter_college.upper()
+            courses = [c for c in courses
+                       if cid in str(c.get("share_college", ""))]
+
+        xml_output = aggr.to_xml(
+            [c for c in aggr._merged
+             if not filter_college
+             or filter_college.upper() in str(c.get("share_college", ""))]
+        )
+
+        if "application/json" in (self.headers.get("Accept") or ""):
+            self._send_json({
+                "statistics": stats,
+                "total": len(courses),
+                "courses": courses,
+            })
+        else:
+            self._send_xml(xml_output)
 
     # ================================================================
     # GET /api/students — 全体学生
