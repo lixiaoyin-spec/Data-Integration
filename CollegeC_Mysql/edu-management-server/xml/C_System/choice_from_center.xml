@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="GB2312"?>
+<choices>
+    <choice>
+        <sid>2026001</sid>
+        <cid>C001</cid>
+        <score></score>
+    </choice>
+    <choice>
+        <sid>2026999</sid>
+        <cid>C002</cid>
+        <score></score>
+    </choice>
+</choices>
