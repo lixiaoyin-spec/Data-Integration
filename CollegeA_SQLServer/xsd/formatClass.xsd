@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 标准集成格式 - 课程信息 XSD Schema -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           elementFormDefault="qualified">
+
+  <xs:element name="Classes">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="class" minOccurs="0" maxOccurs="unbounded">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="id" type="CourseIdType">
+                <xs:annotation><xs:documentation>课程号</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="name" type="xs:string">
+                <xs:annotation><xs:documentation>课程名</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="score" type="CreditType" minOccurs="0">
+                <xs:annotation><xs:documentation>学分</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="teacher" type="xs:string" minOccurs="0">
+                <xs:annotation><xs:documentation>授课教师</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="location" type="xs:string" minOccurs="0">
+                <xs:annotation><xs:documentation>上课地点</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="share" type="CollegeType" minOccurs="0">
+                <xs:annotation><xs:documentation>共享来源学院</xs:documentation></xs:annotation>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:simpleType name="CourseIdType">
+    <xs:restriction base="xs:string">
+      <xs:maxLength value="12"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="CreditType">
+    <xs:restriction base="xs:unsignedByte">
+      <xs:maxInclusive value="10"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+  <xs:simpleType name="CollegeType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="A"/>
+      <xs:enumeration value="B"/>
+      <xs:enumeration value="C"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+</xs:schema>

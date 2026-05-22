@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 标准集成格式 - 选课信息 XSD Schema -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           elementFormDefault="qualified">
+
+  <xs:element name="Choices">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="choice" minOccurs="0" maxOccurs="unbounded">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="sid" type="xs:string">
+                <xs:annotation><xs:documentation>学号</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="cid" type="xs:string">
+                <xs:annotation><xs:documentation>课程号</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="score" type="GradeType" minOccurs="0">
+                <xs:annotation><xs:documentation>成绩 (0-100)</xs:documentation></xs:annotation>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <!-- 选课成绩: 可为空(新选课无成绩) 或 0-100整数 -->
+  <xs:simpleType name="GradeType">
+    <xs:union memberTypes="EmptyString xs:unsignedByte"/>
+  </xs:simpleType>
+
+  <xs:simpleType name="EmptyString">
+    <xs:restriction base="xs:string">
+      <xs:maxLength value="0"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+</xs:schema>

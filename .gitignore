@@ -1,0 +1,18 @@
+# 排除你不想上传的文件夹
+.claude/
+
+# 推荐添加的通用忽略项（避免上传无用文件）
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# IDE和编辑器临时文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 压缩包和临时文件
+*.zip
+*.rar
+*.tmp

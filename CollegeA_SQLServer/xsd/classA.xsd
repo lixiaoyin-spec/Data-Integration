@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 学院A (SQL Server) 原生格式 - 课程信息 XSD Schema -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           elementFormDefault="qualified">
+
+  <xs:element name="Classes">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="class" minOccurs="0" maxOccurs="unbounded">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Cno" type="xs:string">
+                <xs:annotation><xs:documentation>课程号 VARCHAR(8)</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="Cnm" type="xs:string">
+                <xs:annotation><xs:documentation>课程名 VARCHAR(10)</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="Ctm" type="xs:string" minOccurs="0">
+                <xs:annotation><xs:documentation>学分 VARCHAR(2)</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="Cpt" type="xs:string" minOccurs="0">
+                <xs:annotation><xs:documentation>学时 VARCHAR(10)</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="Tec" type="xs:string" minOccurs="0">
+                <xs:annotation><xs:documentation>教师 VARCHAR(20)</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="Pla" type="xs:string" minOccurs="0">
+                <xs:annotation><xs:documentation>地点 CHAR(1)</xs:documentation></xs:annotation>
+              </xs:element>
+              <xs:element name="Share" type="CollegeTypeA" minOccurs="0">
+                <xs:annotation><xs:documentation>共享来源</xs:documentation></xs:annotation>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:simpleType name="CollegeTypeA">
+    <xs:restriction base="xs:string">
+      <xs:maxLength value="10"/>
+    </xs:restriction>
+  </xs:simpleType>
+
+</xs:schema>
