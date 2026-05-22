@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<enrollments>
+  <enrollment>
+    <sid>B2023001</sid>
+    <cid>C001</cid>
+  </enrollment>
+  <enrollment>
+    <sid>B2023002</sid>
+    <cid>C003</cid>
+  </enrollment>
+</enrollments>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="urn:oracle-b:shared-courses"
+           xmlns="urn:oracle-b:shared-courses"
+           elementFormDefault="qualified">
+
+  <xs:element name="SharedCourses">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Course" maxOccurs="unbounded" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="cid" type="xs:string"/>
+              <xs:element name="cname" type="xs:string"/>
+              <xs:element name="hours" type="xs:int"/>
+              <xs:element name="credit" type="xs:decimal"/>
+              <xs:element name="teacher" type="xs:string"/>
+              <xs:element name="location" type="xs:string" minOccurs="0"/>
+              <xs:element name="shareFlag" type="xs:string"/>
+              <xs:element name="capacity" type="xs:int"/>
+              <xs:element name="status" type="xs:string"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+      <xs:attribute name="college" type="xs:string" use="required"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

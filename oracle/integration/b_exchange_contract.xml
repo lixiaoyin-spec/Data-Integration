@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BIntegrationContract xmlns="urn:oracle-b:integration-contract" college="B" version="1.0">
+  <Endpoints>
+    <SharedCourses>GET /b/shared-courses/xml</SharedCourses>
+    <Enrollments>POST /b/enroll/xml</Enrollments>
+    <Transcript>GET /b/transcript?sid={sid}</Transcript>
+  </Endpoints>
+  <Payloads>
+    <SharedCoursesSchema>../xml/shared_courses.xsd</SharedCoursesSchema>
+    <EnrollmentSchema>../xml/enrollment_exchange.xsd</EnrollmentSchema>
+  </Payloads>
+  <Rules>
+    <Rule>共享课程必须通过 XML 导出</Rule>
+    <Rule>跨库选课通过 XML 提交 enrollment 节点</Rule>
+    <Rule>退课应保留记录并变更状态，不直接物理删除</Rule>
+  </Rules>
+</BIntegrationContract>

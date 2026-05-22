@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SharedCourses college="B">
+  <Course>
+    <cid>C001</cid>
+    <cname>数据库系统</cname>
+    <hours>48</hours>
+    <credit>3</credit>
+    <teacher>赵老师</teacher>
+    <location>B-301</location>
+    <shareFlag>Y</shareFlag>
+    <capacity>60</capacity>
+    <status>OPEN</status>
+  </Course>
+</SharedCourses>

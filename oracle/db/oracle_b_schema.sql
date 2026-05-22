@@ -1,0 +1,415 @@
+-- B系统（Oracle）数据库初始化脚本
+-- 说明：对应实验中的院系B本地教务系统，兼容跨系集成需求。
+
+-- 1. 学生表
+CREATE TABLE B_STUDENT (
+    SID        VARCHAR2(9)  PRIMARY KEY,
+    SNAME      VARCHAR2(20) NOT NULL,
+    SEX        VARCHAR2(2)  CHECK (SEX IN ('男', '女')),
+    MAJOR      VARCHAR2(40) NOT NULL,
+    PASSWORD   VARCHAR2(20) NOT NULL,
+    GRADE      NUMBER(4)    DEFAULT 2023 NOT NULL,
+    PHONE      VARCHAR2(20),
+    STATUS     VARCHAR2(10) DEFAULT 'NORMAL' NOT NULL,
+    CONSTRAINT CK_B_STUDENT_STATUS CHECK (STATUS IN ('NORMAL', 'SUSPEND'))
+);
+
+-- 2. 账户表
+CREATE TABLE B_ACCOUNT (
+    ACC_NAME   VARCHAR2(12) PRIMARY KEY,
+    ACC_PWD    VARCHAR2(20) NOT NULL,
+    LEVEL_NO   NUMBER(2)    DEFAULT 1 NOT NULL,
+    SID        VARCHAR2(9)  UNIQUE,
+    CREATE_DT  TIMESTAMP    DEFAULT SYSTIMESTAMP NOT NULL,
+    CONSTRAINT FK_B_ACCOUNT_STUDENT FOREIGN KEY (SID) REFERENCES B_STUDENT(SID),
+    CONSTRAINT CK_B_ACCOUNT_LEVEL CHECK (LEVEL_NO BETWEEN 1 AND 9)
+);
+
+-- 3. 课程表
+CREATE TABLE B_COURSE (
+    CID         VARCHAR2(5)  PRIMARY KEY,
+    CNAME       VARCHAR2(40) NOT NULL,
+    HOURS       NUMBER(3)    NOT NULL,
+    CREDIT      NUMBER(2,1)  NOT NULL,
+    TEACHER     VARCHAR2(20) NOT NULL,
+    LOCATION    VARCHAR2(40),
+    SHARE_FLAG  CHAR(1)      DEFAULT 'N' NOT NULL,
+    CAPACITY    NUMBER(4)    DEFAULT 60 NOT NULL,
+    STATUS      VARCHAR2(12) DEFAULT 'OPEN' NOT NULL,
+    CONSTRAINT CK_B_COURSE_SHARE CHECK (SHARE_FLAG IN ('Y', 'N')),
+    CONSTRAINT CK_B_COURSE_STATUS CHECK (STATUS IN ('OPEN', 'CLOSED')),
+    CONSTRAINT CK_B_COURSE_CREDIT CHECK (CREDIT > 0),
+    CONSTRAINT CK_B_COURSE_HOURS CHECK (HOURS > 0),
+    CONSTRAINT CK_B_COURSE_CAPACITY CHECK (CAPACITY > 0)
+);
+
+-- 4. 选课表
+CREATE TABLE B_ENROLLMENT (
+    SID        VARCHAR2(9) NOT NULL,
+    CID        VARCHAR2(5) NOT NULL,
+    SCORE      NUMBER(3),
+    ENROLL_DT  DATE DEFAULT SYSDATE NOT NULL,
+    CHOICE_STA VARCHAR2(12) DEFAULT 'ENROLLED' NOT NULL,
+    CONSTRAINT PK_B_ENROLLMENT PRIMARY KEY (SID, CID),
+    CONSTRAINT FK_B_ENROLL_STUDENT FOREIGN KEY (SID) REFERENCES B_STUDENT(SID),
+    CONSTRAINT FK_B_ENROLL_COURSE FOREIGN KEY (CID) REFERENCES B_COURSE(CID),
+    CONSTRAINT CK_B_ENROLL_SCORE CHECK (SCORE IS NULL OR (SCORE BETWEEN 0 AND 100)),
+    CONSTRAINT CK_B_ENROLL_STATUS CHECK (CHOICE_STA IN ('ENROLLED', 'DROPPED'))
+);
+
+-- 5. 课程容量统计视图所需索引
+CREATE INDEX IDX_B_ENROLL_CID ON B_ENROLLMENT(CID);
+CREATE INDEX IDX_B_STUDENT_MAJOR ON B_STUDENT(MAJOR);
+
+-- 6. 共享课程视图
+CREATE OR REPLACE VIEW V_B_SHARED_COURSE AS
+SELECT CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, SHARE_FLAG, CAPACITY, STATUS
+FROM B_COURSE
+WHERE SHARE_FLAG = 'Y';
+
+-- 7. 学生成绩视图
+CREATE OR REPLACE VIEW V_B_STUDENT_SCORE AS
+SELECT s.SID,
+       s.SNAME,
+       s.MAJOR,
+       c.CID,
+       c.CNAME,
+       e.SCORE,
+       e.CHOICE_STA
+FROM B_STUDENT s
+LEFT JOIN B_ENROLLMENT e ON s.SID = e.SID
+LEFT JOIN B_COURSE c ON e.CID = c.CID;
+
+-- 8. 课程选课人数视图
+CREATE OR REPLACE VIEW V_B_COURSE_ENROLL_COUNT AS
+SELECT c.CID,
+       c.CNAME,
+       c.CAPACITY,
+       COUNT(e.SID) AS ENROLL_COUNT
+FROM B_COURSE c
+LEFT JOIN B_ENROLLMENT e ON c.CID = e.CID AND e.CHOICE_STA = 'ENROLLED'
+GROUP BY c.CID, c.CNAME, c.CAPACITY;
+
+-- 9. 触发器：限制选课容量
+CREATE OR REPLACE TRIGGER TRG_B_ENROLL_CAPACITY
+BEFORE INSERT ON B_ENROLLMENT
+FOR EACH ROW
+DECLARE
+    v_capacity NUMBER;
+    v_count    NUMBER;
+BEGIN
+    SELECT CAPACITY INTO v_capacity
+    FROM B_COURSE
+    WHERE CID = :NEW.CID
+    FOR UPDATE;
+
+    SELECT COUNT(*) INTO v_count
+    FROM B_ENROLLMENT
+    WHERE CID = :NEW.CID AND CHOICE_STA = 'ENROLLED';
+
+    IF v_count >= v_capacity THEN
+        RAISE_APPLICATION_ERROR(-20001, '课程容量已满，无法选课');
+    END IF;
+END;
+/
+
+-- 10. 触发器：自动维护及格状态（如成绩录入后可扩展）
+CREATE OR REPLACE TRIGGER TRG_B_SCORE_STATUS
+BEFORE INSERT OR UPDATE OF SCORE ON B_ENROLLMENT
+FOR EACH ROW
+BEGIN
+    IF :NEW.SCORE IS NOT NULL AND :NEW.SCORE >= 60 THEN
+        :NEW.CHOICE_STA := NVL(:NEW.CHOICE_STA, 'ENROLLED');
+    END IF;
+END;
+/
+
+-- 11. 存储过程：学生选课
+CREATE OR REPLACE PROCEDURE P_B_ENROLL_COURSE(
+    P_SID IN VARCHAR2,
+    P_CID IN VARCHAR2
+) AS
+    v_exist NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO v_exist
+    FROM B_ENROLLMENT
+    WHERE SID = P_SID AND CID = P_CID;
+
+    IF v_exist > 0 THEN
+        RAISE_APPLICATION_ERROR(-20002, '该学生已选该课程');
+    END IF;
+
+    INSERT INTO B_ENROLLMENT(SID, CID, SCORE, CHOICE_STA)
+    VALUES (P_SID, P_CID, NULL, 'ENROLLED');
+END;
+/
+
+-- 12. 存储过程：学生退课
+CREATE OR REPLACE PROCEDURE P_B_DROP_COURSE(
+    P_SID IN VARCHAR2,
+    P_CID IN VARCHAR2
+) AS
+BEGIN
+    UPDATE B_ENROLLMENT
+    SET CHOICE_STA = 'DROPPED'
+    WHERE SID = P_SID AND CID = P_CID;
+
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20003, '退课失败，未找到选课记录');
+    END IF;
+END;
+/
+
+-- 13. 存储过程：录入成绩
+CREATE OR REPLACE PROCEDURE P_B_UPDATE_SCORE(
+    P_SID   IN VARCHAR2,
+    P_CID   IN VARCHAR2,
+    P_SCORE IN NUMBER
+) AS
+BEGIN
+    UPDATE B_ENROLLMENT
+    SET SCORE = P_SCORE
+    WHERE SID = P_SID AND CID = P_CID;
+
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20004, '成绩更新失败，未找到选课记录');
+    END IF;
+END;
+/
+
+-- 14. 常用查询过程：查询学生个人成绩单（供前端/集成服务器调用）
+CREATE OR REPLACE PROCEDURE P_B_GET_TRANSCRIPT(
+    P_SID IN VARCHAR2,
+    P_CURSOR OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN P_CURSOR FOR
+        SELECT s.SID,
+               s.SNAME,
+               s.MAJOR,
+               c.CID,
+               c.CNAME,
+               c.CREDIT,
+               e.SCORE,
+               e.CHOICE_STA,
+               e.ENROLL_DT
+        FROM B_STUDENT s
+        LEFT JOIN B_ENROLLMENT e ON s.SID = e.SID
+        LEFT JOIN B_COURSE c ON e.CID = c.CID
+        WHERE s.SID = P_SID
+        ORDER BY c.CID;
+END;
+/
+
+-- 15. 常用查询过程：查询共享课程列表
+CREATE OR REPLACE PROCEDURE P_B_GET_SHARED_COURSE(
+    P_CURSOR OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN P_CURSOR FOR
+        SELECT CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, CAPACITY, STATUS
+        FROM B_COURSE
+        WHERE SHARE_FLAG = 'Y'
+        ORDER BY CID;
+END;
+/
+
+-- 16. 常用查询过程：查询某课程选课情况
+CREATE OR REPLACE PROCEDURE P_B_GET_COURSE_ENROLL(
+    P_CID IN VARCHAR2,
+    P_CURSOR OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN P_CURSOR FOR
+        SELECT e.SID,
+               s.SNAME,
+               c.CID,
+               c.CNAME,
+               e.SCORE,
+               e.CHOICE_STA,
+               e.ENROLL_DT
+        FROM B_ENROLLMENT e
+        JOIN B_STUDENT s ON e.SID = s.SID
+        JOIN B_COURSE c ON e.CID = c.CID
+        WHERE e.CID = P_CID
+        ORDER BY e.SID;
+END;
+/
+
+-- 17. XML 导出接口：生成学生成绩单 XML
+-- 说明：此处采用 XMLTYPE 返回，便于 Java/集成服务器直接读取。
+CREATE OR REPLACE PROCEDURE P_B_EXPORT_TRANSCRIPT_XML(
+    P_SID   IN VARCHAR2,
+    P_CURSOR OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN P_CURSOR FOR
+        SELECT XMLELEMENT("Transcript",
+                 XMLATTRIBUTES(s.SID AS "sid", s.SNAME AS "name", s.MAJOR AS "major"),
+                 XMLAGG(
+                   XMLELEMENT("Course",
+                     XMLELEMENT("cid", c.CID),
+                     XMLELEMENT("cname", c.CNAME),
+                     XMLELEMENT("credit", c.CREDIT),
+                     XMLELEMENT("score", e.SCORE),
+                     XMLELEMENT("status", e.CHOICE_STA)
+                   )
+                 )
+               ) AS XML_DATA
+        FROM B_STUDENT s
+        LEFT JOIN B_ENROLLMENT e ON s.SID = e.SID
+        LEFT JOIN B_COURSE c ON e.CID = c.CID
+        WHERE s.SID = P_SID
+        GROUP BY s.SID, s.SNAME, s.MAJOR;
+END;
+/
+
+-- 18. XML 导入接口：根据外部选课 XML 落库（示意型接口）
+CREATE OR REPLACE PROCEDURE P_B_IMPORT_ENROLL_XML(
+    P_SID IN VARCHAR2,
+    P_CID IN VARCHAR2
+) AS
+BEGIN
+    P_B_ENROLL_COURSE(P_SID, P_CID);
+END;
+/
+
+-- 19. 课程共享查询接口：便于本地服务器或集成服务器调用
+CREATE OR REPLACE PROCEDURE P_B_GET_OPEN_COURSE(
+    P_CURSOR OUT SYS_REFCURSOR
+) AS
+BEGIN
+    OPEN P_CURSOR FOR
+        SELECT CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, SHARE_FLAG, CAPACITY, STATUS
+        FROM B_COURSE
+        WHERE STATUS = 'OPEN'
+        ORDER BY CID;
+END;
+/
+
+-- 20. 初始化示例数据（扩展到实验要求：50名学生、10门课程、每人5门课）
+INSERT INTO B_STUDENT(SID, SNAME, SEX, MAJOR, PASSWORD, GRADE, PHONE, STATUS) VALUES ('B2023001', '张三', '男', '计算机科学', '123456', 2023, '13800000001', 'NORMAL');
+INSERT INTO B_STUDENT(SID, SNAME, SEX, MAJOR, PASSWORD, GRADE, PHONE, STATUS) VALUES ('B2023002', '李四', '女', '软件工程', '123456', 2023, '13800000002', 'NORMAL');
+INSERT INTO B_STUDENT(SID, SNAME, SEX, MAJOR, PASSWORD, GRADE, PHONE, STATUS) VALUES ('B2023003', '王五', '男', '网络工程', '123456', 2022, '13800000003', 'NORMAL');
+
+INSERT INTO B_ACCOUNT(ACC_NAME, ACC_PWD, LEVEL_NO, SID) VALUES ('badmin', 'admin123', 9, NULL);
+INSERT INTO B_ACCOUNT(ACC_NAME, ACC_PWD, LEVEL_NO, SID) VALUES ('b2023001', '123456', 1, 'B2023001');
+INSERT INTO B_ACCOUNT(ACC_NAME, ACC_PWD, LEVEL_NO, SID) VALUES ('b2023002', '123456', 1, 'B2023002');
+INSERT INTO B_ACCOUNT(ACC_NAME, ACC_PWD, LEVEL_NO, SID) VALUES ('b2023003', '123456', 1, 'B2023003');
+
+INSERT INTO B_COURSE(CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, SHARE_FLAG, CAPACITY, STATUS) VALUES ('C001', '数据库系统', 48, 3, '赵老师', 'B-301', 'Y', 60, 'OPEN');
+INSERT INTO B_COURSE(CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, SHARE_FLAG, CAPACITY, STATUS) VALUES ('C002', '操作系统', 54, 4, '钱老师', 'B-302', 'N', 55, 'OPEN');
+INSERT INTO B_COURSE(CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, SHARE_FLAG, CAPACITY, STATUS) VALUES ('C003', '软件工程', 40, 2, '孙老师', 'B-303', 'Y', 50, 'OPEN');
+INSERT INTO B_COURSE(CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, SHARE_FLAG, CAPACITY, STATUS) VALUES ('C004', 'Java程序设计', 64, 4, '李老师', 'B-304', 'N', 60, 'OPEN');
+
+INSERT INTO B_ENROLLMENT(SID, CID, SCORE, CHOICE_STA) VALUES ('B2023001', 'C001', 88, 'ENROLLED');
+INSERT INTO B_ENROLLMENT(SID, CID, SCORE, CHOICE_STA) VALUES ('B2023001', 'C002', 76, 'ENROLLED');
+INSERT INTO B_ENROLLMENT(SID, CID, SCORE, CHOICE_STA) VALUES ('B2023002', 'C001', 92, 'ENROLLED');
+INSERT INTO B_ENROLLMENT(SID, CID, SCORE, CHOICE_STA) VALUES ('B2023003', 'C003', NULL, 'ENROLLED');
+
+-- 扩展学生到 50 人
+DECLARE
+    v_sid    VARCHAR2(9);
+    v_name   VARCHAR2(20);
+    v_sex    VARCHAR2(2);
+    v_major  VARCHAR2(40);
+    v_pwd    VARCHAR2(20);
+    v_phone  VARCHAR2(20);
+    v_grade  NUMBER;
+BEGIN
+    FOR i IN 4 .. 50 LOOP
+        v_sid := 'B2023' || LPAD(i, 4, '0');
+        v_name := '学生' || TO_CHAR(i);
+        v_sex := CASE WHEN MOD(i, 2) = 0 THEN '女' ELSE '男' END;
+        v_major := CASE MOD(i, 5)
+                     WHEN 0 THEN '计算机科学'
+                     WHEN 1 THEN '软件工程'
+                     WHEN 2 THEN '网络工程'
+                     WHEN 3 THEN '人工智能'
+                     ELSE '数据科学'
+                   END;
+        v_pwd := '123456';
+        v_phone := '1380000' || LPAD(i, 4, '0');
+        v_grade := 2021 + MOD(i, 4);
+        INSERT INTO B_STUDENT(SID, SNAME, SEX, MAJOR, PASSWORD, GRADE, PHONE, STATUS)
+        VALUES (v_sid, v_name, v_sex, v_major, v_pwd, v_grade, v_phone, 'NORMAL');
+        INSERT INTO B_ACCOUNT(ACC_NAME, ACC_PWD, LEVEL_NO, SID)
+        VALUES (LOWER(v_sid), v_pwd, 1, v_sid);
+    END LOOP;
+END;
+/
+
+-- 扩展课程到 10 门
+DECLARE
+    v_idx NUMBER;
+BEGIN
+    FOR i IN 5 .. 10 LOOP
+        v_idx := i;
+        INSERT INTO B_COURSE(CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, SHARE_FLAG, CAPACITY, STATUS)
+        VALUES (
+            'C00' || TO_CHAR(v_idx),
+            CASE v_idx
+                WHEN 5 THEN '数据结构'
+                WHEN 6 THEN '计算机网络'
+                WHEN 7 THEN '编译原理'
+                WHEN 8 THEN '数据库应用'
+                WHEN 9 THEN 'Web开发'
+                ELSE '人工智能导论'
+            END,
+            CASE v_idx
+                WHEN 5 THEN 48
+                WHEN 6 THEN 56
+                WHEN 7 THEN 48
+                WHEN 8 THEN 40
+                WHEN 9 THEN 32
+                ELSE 48
+            END,
+            CASE v_idx
+                WHEN 5 THEN 3
+                WHEN 6 THEN 3
+                WHEN 7 THEN 3
+                WHEN 8 THEN 2
+                WHEN 9 THEN 2
+                ELSE 3
+            END,
+            CASE v_idx
+                WHEN 5 THEN '周老师'
+                WHEN 6 THEN '吴老师'
+                WHEN 7 THEN '郑老师'
+                WHEN 8 THEN '王老师'
+                WHEN 9 THEN '冯老师'
+                ELSE '陈老师'
+            END,
+            'B-' || TO_CHAR(300 + v_idx),
+            CASE WHEN MOD(v_idx, 2) = 1 THEN 'Y' ELSE 'N' END,
+            60,
+            'OPEN'
+        );
+    END LOOP;
+END;
+/
+
+-- 每个学生选 5 门课（按学号与课程号轮转，确保总量满足要求）
+DECLARE
+    v_sid VARCHAR2(9);
+    v_cid VARCHAR2(5);
+    v_score NUMBER;
+BEGIN
+    FOR i IN 1 .. 50 LOOP
+        v_sid := 'B2023' || LPAD(i, 4, '0');
+        FOR j IN 0 .. 4 LOOP
+            v_cid := 'C00' || TO_CHAR(MOD(i + j - 1, 10) + 1);
+            BEGIN
+                v_score := CASE WHEN MOD(i + j, 3) = 0 THEN NULL ELSE 60 + MOD(i * 7 + j * 11, 41) END;
+                INSERT INTO B_ENROLLMENT(SID, CID, SCORE, CHOICE_STA)
+                VALUES (v_sid, v_cid, v_score, 'ENROLLED');
+            EXCEPTION
+                WHEN DUP_VAL_ON_INDEX THEN
+                    NULL;
+            END;
+        END LOOP;
+    END LOOP;
+END;
+/
+
+COMMIT;

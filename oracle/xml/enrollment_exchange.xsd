@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="urn:oracle-b:enrollment-exchange"
+           xmlns="urn:oracle-b:enrollment-exchange"
+           elementFormDefault="qualified">
+
+  <xs:element name="enrollments">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="enrollment" maxOccurs="unbounded" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="sid" type="xs:string"/>
+              <xs:element name="cid" type="xs:string"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
