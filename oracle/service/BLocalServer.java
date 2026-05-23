@@ -61,6 +61,12 @@ public class BLocalServer {
         httpServer.createContext("/b/transcript", this::handleTranscript);
         httpServer.createContext("/b/transcript/xml", this::handleTranscriptXml);
         httpServer.createContext("/b/api/status", this::handleStatus);
+        httpServer.createContext("/b/students/xml", this::handleStudentsXml);
+        httpServer.createContext("/b/courses/xml", this::handleCoursesXml);
+        httpServer.createContext("/b/selections/xml", this::handleSelectionsXml);
+        httpServer.createContext("/b/students/import", this::handleImportStudent);
+        httpServer.createContext("/b/enrollments/import", this::handleImportEnrollment);
+        httpServer.createContext("/b/statistics", this::handleStatistics);
         httpServer.setExecutor(null);
         httpServer.start();
         System.out.println("B Local Server started on port " + port);
@@ -79,7 +85,11 @@ public class BLocalServer {
             sendText(exchange, 405, "Method Not Allowed", "text/plain; charset=UTF-8");
             return;
         }
-        sendText(exchange, 200, "{\"status\":\"running\",\"system\":\"B-Oracle\"}", "application/json; charset=UTF-8");
+        try {
+            sendText(exchange, 200, repository.getCounts(), "application/json; charset=UTF-8");
+        } catch (SQLException e) {
+            sendText(exchange, 200, "{\"status\":\"running\",\"system\":\"B-Oracle\"}", "application/json; charset=UTF-8");
+        }
     }
 
     private void handleLogin(HttpExchange exchange) throws IOException {
@@ -262,6 +272,109 @@ public class BLocalServer {
         }
     }
 
+    private void handleStudentsXml(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendText(exchange, 405, "Method Not Allowed", "text/plain; charset=UTF-8");
+            return;
+        }
+        try {
+            sendText(exchange, 200, repository.getStudentsStandardXml(), "application/xml; charset=UTF-8");
+        } catch (SQLException e) {
+            sendText(exchange, 500, jsonError(e.getMessage()), "application/json; charset=UTF-8");
+        }
+    }
+
+    private void handleCoursesXml(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendText(exchange, 405, "Method Not Allowed", "text/plain; charset=UTF-8");
+            return;
+        }
+        try {
+            sendText(exchange, 200, repository.getCoursesStandardXml(), "application/xml; charset=UTF-8");
+        } catch (SQLException e) {
+            sendText(exchange, 500, jsonError(e.getMessage()), "application/json; charset=UTF-8");
+        }
+    }
+
+    private void handleSelectionsXml(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendText(exchange, 405, "Method Not Allowed", "text/plain; charset=UTF-8");
+            return;
+        }
+        try {
+            sendText(exchange, 200, repository.getSelectionsXml(), "application/xml; charset=UTF-8");
+        } catch (SQLException e) {
+            sendText(exchange, 500, jsonError(e.getMessage()), "application/json; charset=UTF-8");
+        }
+    }
+
+    private void handleImportStudent(HttpExchange exchange) throws IOException {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendText(exchange, 405, "Method Not Allowed", "text/plain; charset=UTF-8");
+            return;
+        }
+        String body = readBody(exchange.getRequestBody());
+        Map<String, String> data = parseJson(body);
+        String sno = data.getOrDefault("sno", "");
+        String snm = data.getOrDefault("snm", "");
+        String sex = data.getOrDefault("sex", "");
+        String sde = data.getOrDefault("sde", "");
+        String pwd = data.getOrDefault("pwd", sno);
+        if (sno.isEmpty() || snm.isEmpty()) {
+            sendText(exchange, 400, "{\"status\":\"fail\",\"message\":\"缺少必要参数: sno, snm\"}", "application/json; charset=UTF-8");
+            return;
+        }
+        try {
+            repository.importStudent(sno, snm, sex, sde, pwd);
+            sendText(exchange, 200, "{\"status\":\"success\",\"message\":\"学生导入成功\"}", "application/json; charset=UTF-8");
+        } catch (SQLException e) {
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("ORA-00001") || msg.contains("unique constraint"))) {
+                sendText(exchange, 200, "{\"status\":\"success\",\"message\":\"学生已存在，跳过导入\"}", "application/json; charset=UTF-8");
+            } else {
+                sendText(exchange, 500, jsonError(msg), "application/json; charset=UTF-8");
+            }
+        }
+    }
+
+    private void handleImportEnrollment(HttpExchange exchange) throws IOException {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendText(exchange, 405, "Method Not Allowed", "text/plain; charset=UTF-8");
+            return;
+        }
+        String body = readBody(exchange.getRequestBody());
+        Map<String, String> data = parseJson(body);
+        String sno = data.getOrDefault("sno", "");
+        String cno = data.getOrDefault("cno", "");
+        if (sno.isEmpty() || cno.isEmpty()) {
+            sendText(exchange, 400, "{\"status\":\"fail\",\"message\":\"缺少必要参数: sno, cno\"}", "application/json; charset=UTF-8");
+            return;
+        }
+        try {
+            repository.importEnrollment(sno, cno);
+            sendText(exchange, 200, "{\"status\":\"success\",\"message\":\"选课导入成功\"}", "application/json; charset=UTF-8");
+        } catch (SQLException e) {
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("ORA-00001")) {
+                sendText(exchange, 200, "{\"status\":\"success\",\"message\":\"选课记录已存在\"}", "application/json; charset=UTF-8");
+            } else {
+                sendText(exchange, 500, jsonError(msg), "application/json; charset=UTF-8");
+            }
+        }
+    }
+
+    private void handleStatistics(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendText(exchange, 405, "Method Not Allowed", "text/plain; charset=UTF-8");
+            return;
+        }
+        try {
+            sendText(exchange, 200, repository.getStatistics(), "application/json; charset=UTF-8");
+        } catch (SQLException e) {
+            sendText(exchange, 500, jsonError(e.getMessage()), "application/json; charset=UTF-8");
+        }
+    }
+
     private static String readBody(InputStream inputStream) throws IOException {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
             StringBuilder sb = new StringBuilder();
@@ -284,6 +397,18 @@ public class BLocalServer {
             if (kv.length == 2) {
                 map.put(urlDecode(kv[0]), urlDecode(kv[1]));
             }
+        }
+        return map;
+    }
+
+    private static Map<String, String> parseJson(String body) {
+        Map<String, String> map = new HashMap<>();
+        if (body == null || body.isEmpty()) {
+            return map;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"(\\w+)\"\\s*:\\s*\"([^\"]*)\"").matcher(body);
+        while (m.find()) {
+            map.put(m.group(1), m.group(2));
         }
         return map;
     }
@@ -517,6 +642,143 @@ public class BLocalServer {
                     xml.append("</Transcript>");
                     return xml.toString();
                 }
+            }
+        }
+
+        public String getStudentsStandardXml() throws SQLException {
+            String sql = "SELECT SID, SNAME, SEX, MAJOR, GRADE, PHONE, STATUS FROM B_STUDENT ORDER BY SID";
+            try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+                StringBuilder xml = new StringBuilder();
+                xml.append("<Students>");
+                while (rs.next()) {
+                    xml.append("<student>")
+                       .append(tag("id", rs.getString("SID")))
+                       .append(tag("name", rs.getString("SNAME")))
+                       .append(tag("sex", rs.getString("SEX")))
+                       .append(tag("major", rs.getString("MAJOR")))
+                       .append(tag("grade", String.valueOf(rs.getInt("GRADE"))))
+                       .append(tag("phone", rs.getString("PHONE")))
+                       .append(tag("status", rs.getString("STATUS")))
+                       .append("</student>");
+                }
+                xml.append("</Students>");
+                return xml.toString();
+            }
+        }
+
+        public String getCoursesStandardXml() throws SQLException {
+            String sql = "SELECT CID, CNAME, HOURS, CREDIT, TEACHER, LOCATION, SHARE_FLAG, CAPACITY, STATUS FROM B_COURSE ORDER BY CID";
+            try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+                StringBuilder xml = new StringBuilder();
+                xml.append("<Classes>");
+                while (rs.next()) {
+                    xml.append("<class>")
+                       .append(tag("id", rs.getString("CID")))
+                       .append(tag("name", rs.getString("CNAME")))
+                       .append(tag("hours", String.valueOf(rs.getInt("HOURS"))))
+                       .append(tag("credit", String.valueOf(rs.getDouble("CREDIT"))))
+                       .append(tag("teacher", rs.getString("TEACHER")))
+                       .append(tag("location", rs.getString("LOCATION")))
+                       .append(tag("shareFlag", rs.getString("SHARE_FLAG")))
+                       .append(tag("capacity", String.valueOf(rs.getInt("CAPACITY"))))
+                       .append(tag("status", rs.getString("STATUS")))
+                       .append("</class>");
+                }
+                xml.append("</Classes>");
+                return xml.toString();
+            }
+        }
+
+        public String getSelectionsXml() throws SQLException {
+            String sql = "SELECT e.SID, e.CID, c.CNAME, e.SCORE, e.CHOICE_STA, TO_CHAR(e.ENROLL_DT, 'YYYY-MM-DD') AS ENROLL_DATE FROM B_ENROLLMENT e JOIN B_COURSE c ON e.CID = c.CID ORDER BY e.SID, e.CID";
+            try (Connection conn = getConnection(); PreparedStatement ps = conn.prepareStatement(sql); ResultSet rs = ps.executeQuery()) {
+                StringBuilder xml = new StringBuilder();
+                xml.append("<Selections>");
+                while (rs.next()) {
+                    xml.append("<selection>")
+                       .append(tag("sid", rs.getString("SID")))
+                       .append(tag("cid", rs.getString("CID")))
+                       .append(tag("cname", rs.getString("CNAME")))
+                       .append(tag("score", rs.getString("SCORE")))
+                       .append(tag("status", rs.getString("CHOICE_STA")))
+                       .append(tag("date", rs.getString("ENROLL_DATE")))
+                       .append("</selection>");
+                }
+                xml.append("</Selections>");
+                return xml.toString();
+            }
+        }
+
+        public void importStudent(String sno, String snm, String sex, String sde, String pwd) throws SQLException {
+            try (Connection conn = getConnection()) {
+                String checkSql = "SELECT COUNT(*) FROM B_STUDENT WHERE SID = ?";
+                try (PreparedStatement ps = conn.prepareStatement(checkSql)) {
+                    ps.setString(1, sno);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next() && rs.getInt(1) > 0) {
+                            return;
+                        }
+                    }
+                }
+                String insertStudent = "INSERT INTO B_STUDENT(SID, SNAME, SEX, MAJOR, PASSWORD, GRADE, PHONE, STATUS) VALUES (?, ?, ?, ?, ?, 2024, ?, 'NORMAL')";
+                try (PreparedStatement ps = conn.prepareStatement(insertStudent)) {
+                    ps.setString(1, sno);
+                    ps.setString(2, snm);
+                    ps.setString(3, sex != null ? sex : "男");
+                    ps.setString(4, sde != null ? sde : "未知专业");
+                    ps.setString(5, pwd != null ? pwd : sno);
+                    ps.setString(6, "-");
+                    ps.executeUpdate();
+                }
+                String insertAccount = "INSERT INTO B_ACCOUNT(ACC_NAME, ACC_PWD, LEVEL_NO, SID) VALUES (?, ?, 1, ?)";
+                try (PreparedStatement ps = conn.prepareStatement(insertAccount)) {
+                    ps.setString(1, sno.toLowerCase());
+                    ps.setString(2, pwd != null ? pwd : sno);
+                    ps.setString(3, sno);
+                    ps.executeUpdate();
+                }
+            }
+        }
+
+        public void importEnrollment(String sno, String cno) throws SQLException {
+            enrollCourse(sno, cno);
+        }
+
+        public String getCounts() throws SQLException {
+            try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+                int students = 0, courses = 0, selections = 0;
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM B_STUDENT")) {
+                    if (rs.next()) students = rs.getInt(1);
+                }
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM B_COURSE")) {
+                    if (rs.next()) courses = rs.getInt(1);
+                }
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM B_ENROLLMENT WHERE CHOICE_STA = 'ENROLLED'")) {
+                    if (rs.next()) selections = rs.getInt(1);
+                }
+                return "{\"status\":\"running\",\"system\":\"B-Oracle\",\"online\":true,\"students\":" + students + ",\"courses\":" + courses + ",\"selections\":" + selections + "}";
+            }
+        }
+
+        public String getStatistics() throws SQLException {
+            try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
+                int students = 0, courses = 0, selections = 0, sharedCourses = 0, dropped = 0;
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM B_STUDENT")) {
+                    if (rs.next()) students = rs.getInt(1);
+                }
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM B_COURSE")) {
+                    if (rs.next()) courses = rs.getInt(1);
+                }
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM B_ENROLLMENT")) {
+                    if (rs.next()) selections = rs.getInt(1);
+                }
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM B_COURSE WHERE SHARE_FLAG = 'Y'")) {
+                    if (rs.next()) sharedCourses = rs.getInt(1);
+                }
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM B_ENROLLMENT WHERE CHOICE_STA = 'DROPPED'")) {
+                    if (rs.next()) dropped = rs.getInt(1);
+                }
+                return "{\"college_id\":\"B\",\"college_name\":\"学院B\",\"dbms\":\"Oracle\",\"students\":" + students + ",\"courses\":" + courses + ",\"selections\":" + selections + ",\"shared_courses\":" + sharedCourses + ",\"dropped\":" + dropped + "}";
             }
         }
 
