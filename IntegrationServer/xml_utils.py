@@ -55,6 +55,25 @@ def parse_students_xml(xml_str, college_id):
     return students
 
 
+def count_enrollments_xml(xml_str):
+    """
+    统计选课/Enrollment XML 中的记录数
+    兼容 Choices/choice、Selections/selection、enrollments/enrollment 等格式
+    """
+    if not xml_str:
+        return 0
+    try:
+        root = ET.fromstring(xml_str)
+        for tag in ("choice", "selection", "enrollment"):
+            elems = root.findall(f".//{tag}")
+            if elems:
+                return len(elems)
+        return 0
+    except ET.ParseError as e:
+        print(f"[XML] 解析选课数据失败: {e}")
+        return 0
+
+
 def parse_transcript_xml(xml_str):
     """
     解析成绩单XML
@@ -132,6 +151,34 @@ def build_student_import_xml(sno, snm, sex, sde):
     ET.SubElement(root, "name").text = snm
     ET.SubElement(root, "sex").text = sex
     ET.SubElement(root, "major").text = sde
+    return _pretty_xml(root)
+
+
+def build_student_xml(student_data):
+    """
+    构建单个学生的标准 XML
+    student_data: {sno, snm, sex, sde}
+    返回 UTF-8 格式化的 XML 字符串
+    """
+    root = ET.Element("Students")
+    stu = ET.SubElement(root, "student")
+    ET.SubElement(stu, "id").text = student_data.get("sno", "")
+    ET.SubElement(stu, "name").text = student_data.get("snm", "")
+    ET.SubElement(stu, "sex").text = student_data.get("sex", "")
+    ET.SubElement(stu, "major").text = student_data.get("sde", "")
+    return _pretty_xml(root)
+
+
+def build_enrollment_xml(enroll_data):
+    """
+    构建单条选课记录的标准 XML
+    enroll_data: {sno, cno}
+    返回 UTF-8 格式化的 XML 字符串
+    """
+    root = ET.Element("Choices")
+    choice = ET.SubElement(root, "choice")
+    ET.SubElement(choice, "sid").text = enroll_data.get("sno", "")
+    ET.SubElement(choice, "cid").text = enroll_data.get("cno", "")
     return _pretty_xml(root)
 
 

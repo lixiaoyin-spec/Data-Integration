@@ -357,20 +357,26 @@ h1{{color:#38bdf8}}h2{{color:#a78bfa;margin-top:30px}}ul{{line-height:2}}.method
         body = self._read_body()
         content_type = self.headers.get("Content-Type", "")
 
-        if "application/json" in content_type:
-            data = json.loads(body)
-            sno = data.get("sno", "")
-            snm = data.get("snm", "")
-            sex = data.get("sex", "")
-            sde = data.get("sde", "")
-            pwd = data.get("pwd", sno)
-        else:
-            form = self._parse_form(body)
-            sno = form.get("sno", "")
-            snm = form.get("snm", "")
-            sex = form.get("sex", "")
-            sde = form.get("sde", "")
-            pwd = form.get("pwd", sno)
+        try:
+            if "xml" in content_type or body.strip().startswith("<"):
+                sno, snm, sex, sde, pwd = _parse_student_import_xml(body)
+            elif "json" in content_type or body.strip().startswith("{"):
+                data = json.loads(body)
+                sno = data.get("sno", "")
+                snm = data.get("snm", "")
+                sex = data.get("sex", "")
+                sde = data.get("sde", "")
+                pwd = data.get("pwd", sno)
+            else:
+                form = self._parse_form(body)
+                sno = form.get("sno", "")
+                snm = form.get("snm", "")
+                sex = form.get("sex", "")
+                sde = form.get("sde", "")
+                pwd = form.get("pwd", sno)
+        except (ET.ParseError, json.JSONDecodeError, ValueError) as e:
+            self._send_json({"status": "fail", "message": f"请求体解析失败: {e}"}, 400)
+            return
 
         if not sno or not snm:
             self._send_json({"status": "fail", "message": "缺少学号或姓名"}, 400)
@@ -394,16 +400,22 @@ h1{{color:#38bdf8}}h2{{color:#a78bfa;margin-top:30px}}ul{{line-height:2}}.method
         body = self._read_body()
         content_type = self.headers.get("Content-Type", "")
 
-        if "application/json" in content_type:
-            data = json.loads(body)
-            sno = data.get("sno", "")
-            cno = data.get("cno", "")
-            grd = data.get("grd", "")
-        else:
-            form = self._parse_form(body)
-            sno = form.get("sno", "")
-            cno = form.get("cno", "")
-            grd = form.get("grd", "")
+        try:
+            if "xml" in content_type or body.strip().startswith("<"):
+                sno, cno, grd = _parse_enrollment_import_xml(body)
+            elif "json" in content_type or body.strip().startswith("{"):
+                data = json.loads(body)
+                sno = data.get("sno", "")
+                cno = data.get("cno", "")
+                grd = data.get("grd", "")
+            else:
+                form = self._parse_form(body)
+                sno = form.get("sno", "")
+                cno = form.get("cno", "")
+                grd = form.get("grd", "")
+        except (ET.ParseError, json.JSONDecodeError, ValueError) as e:
+            self._send_json({"status": "fail", "message": f"请求体解析失败: {e}"}, 400)
+            return
 
         if not sno or not cno:
             self._send_json({"status": "fail", "message": "缺少学号或课程号"}, 400)
@@ -411,11 +423,16 @@ h1{{color:#38bdf8}}h2{{color:#a78bfa;margin-top:30px}}ul{{line-height:2}}.method
 
         db = self._get_db()
         try:
+            existing = any(row[0] == cno for row in db.get_student_selections(sno))
+            if existing:
+                self._send_json({"status": "success", "message": "选课记录已存在,跳过导入"})
+                return
             db.add_selection(sno, cno)
             if grd:
                 db.update_grade(sno, cno, grd)
         except Exception as e:
             self._send_json({"status": "fail", "message": str(e)}, 500)
+            return
         finally:
             db.close()
 
@@ -445,6 +462,49 @@ def _build_students_xml(rows):
         ET.SubElement(student, "sex").text = sex
         ET.SubElement(student, "major").text = sde
     return ET.tostring(root, encoding="unicode")
+
+
+def _xml_text(elem, *tags):
+    """从 XML 元素中按标签名优先级读取文本"""
+    if elem is None:
+        return ""
+    for tag in tags:
+        child = elem.find(tag)
+        if child is not None and child.text:
+            return child.text.strip()
+    return ""
+
+
+def _parse_student_import_xml(body):
+    """
+    解析跨院学生导入 XML
+    支持 <Students><student><id>…</student> 及 <Enrollment> 等格式
+    """
+    root = ET.fromstring(body)
+    student = root.find("student")
+    if student is None:
+        student = root
+    sno = _xml_text(student, "id", "sno", "sid") or _xml_text(root, "id", "sno", "sid")
+    snm = _xml_text(student, "name", "snm", "sname") or _xml_text(root, "name", "snm", "sname")
+    sex = _xml_text(student, "sex") or _xml_text(root, "sex")
+    sde = _xml_text(student, "major", "sde") or _xml_text(root, "major", "sde")
+    pwd = _xml_text(student, "pwd", "password") or _xml_text(root, "pwd", "password") or sno
+    return sno, snm, sex, sde, pwd
+
+
+def _parse_enrollment_import_xml(body):
+    """
+    解析跨院选课导入 XML
+    支持 <Choices><choice><sid><cid> 及 <Enrollment><sno><cno> 格式
+    """
+    root = ET.fromstring(body)
+    choice = root.find("choice")
+    if choice is None:
+        choice = root
+    sno = _xml_text(choice, "sno", "sid", "id") or _xml_text(root, "sno", "sid", "id")
+    cno = _xml_text(choice, "cno", "cid") or _xml_text(root, "cno", "cid")
+    grd = _xml_text(choice, "grd", "score") or _xml_text(root, "grd", "score")
+    return sno, cno, grd
 
 
 if __name__ == "__main__":

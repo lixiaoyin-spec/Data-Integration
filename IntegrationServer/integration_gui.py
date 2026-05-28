@@ -72,6 +72,25 @@ def fmt_xml(text):
         return text
 
 
+def parse_statistics_response(data):
+    """解析 GET /api/statistics 响应"""
+    details_raw = data.get("details", {})
+    if isinstance(details_raw, dict):
+        details = sorted(details_raw.values(), key=lambda d: d.get("college_id", ""))
+    else:
+        details = list(details_raw or [])
+
+    online_count = sum(1 for d in details if d.get("online"))
+    return {
+        "students_total": data.get("students_total", 0),
+        "courses_total": data.get("courses_total", 0),
+        "enrollments_total": data.get("enrollments_total", 0),
+        "online_count": online_count,
+        "colleges_total": len(details),
+        "details": details,
+    }
+
+
 class LoginWindow:
     """登录窗口"""
 
@@ -675,13 +694,13 @@ class MainWindow:
 
         self.stat_text.delete("1.0", tk.END)
 
-        summary = data.get("summary", {})
-        details = data.get("details", [])
+        stats = parse_statistics_response(data)
+        details = stats["details"]
 
         columns = ("学院", "DBMS", "状态", "学生数", "课程数", "选课数")
         tree = ttk.Treeview(self.stat_tree_frame, columns=columns, show="headings",
                             height=8)
-        widths = [100, 100, 80, 100, 100, 100]
+        widths = [100, 100, 120, 100, 100, 100]
         for col, w in zip(columns, widths):
             tree.heading(col, text=col)
             tree.column(col, width=w, anchor="center")
@@ -694,21 +713,24 @@ class MainWindow:
         self.stat_tree_frame.grid_columnconfigure(0, weight=1)
 
         for d in details:
+            status_text = "在线" if d.get("online") else "离线"
+            if d.get("error"):
+                status_text = f"{status_text} ({d['error']})"
             tree.insert("", "end", values=(
                 d.get("college_name", ""),
                 d.get("dbms", ""),
-                "在线" if d.get("online") else "离线",
+                status_text,
                 d.get("students", 0),
                 d.get("courses", 0),
-                d.get("selections", 0),
+                d.get("enrollments", 0),
             ))
 
         summary_text = (
             f"===== 全局统计汇总 =====\n\n"
-            f"在线学院:  {summary.get('colleges_online', 0)} / {summary.get('colleges_total', 0)}\n"
-            f"学生总数:  {summary.get('total_students', 0)}\n"
-            f"课程总数:  {summary.get('total_courses', 0)}\n"
-            f"选课总数:  {summary.get('total_selections', 0)}\n"
+            f"在线学院:  {stats['online_count']} / {stats['colleges_total']}\n"
+            f"学生总数:  {stats['students_total']}\n"
+            f"课程总数:  {stats['courses_total']}\n"
+            f"选课总数:  {stats['enrollments_total']}\n"
         )
         ttk.Label(self.stat_tree_frame, text=summary_text,
                   font=("Microsoft YaHei", 10), foreground="#2563eb",
@@ -908,15 +930,15 @@ class MainWindow:
             return
         try:
             data = json.loads(body)
-            summary = data.get("summary", {})
+            stats = parse_statistics_response(data)
             self.stat_cards["online"].config(
-                text=f"{summary.get('colleges_online', 0)}/{summary.get('colleges_total', 0)}")
+                text=f"{stats['online_count']}/{stats['colleges_total']}")
             self.stat_cards["total_students"].config(
-                text=str(summary.get("total_students", 0)))
+                text=str(stats["students_total"]))
             self.stat_cards["total_courses"].config(
-                text=str(summary.get("total_courses", 0)))
+                text=str(stats["courses_total"]))
             self.stat_cards["total_selections"].config(
-                text=str(summary.get("total_selections", 0)))
+                text=str(stats["enrollments_total"]))
         except ValueError:
             pass
 

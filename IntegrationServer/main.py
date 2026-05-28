@@ -20,7 +20,10 @@ from urllib.parse import urlparse, parse_qs, unquote_plus
 
 from config import INTEGRATION_SERVER, COLLEGES, MAX_COURSES_PER_STUDENT
 from college_client import CollegeRegistry
-from xml_utils import parse_courses_xml, parse_students_xml
+from xml_utils import (
+    parse_courses_xml, parse_students_xml, count_enrollments_xml,
+    build_student_xml, build_enrollment_xml,
+)
 from course_aggregator import CourseAggregator
 
 
@@ -356,11 +359,11 @@ class IntegrationHandler(BaseHTTPRequestHandler):
     #     body: {sno, snm, sex, sde, source_college, cno, cnm, target_college}
     #
     # 流程:
-    #  1. 验证学生属于 source_college
-    #  2. 验证课程属于 target_college
-    #  3. 将学生信息导入 target_college
-    #  4. 在 target_college 创建选课记录
-    #  5. 返回结果
+    #  1. 检查 source_college 和 target_college 是否在线
+    #  2. 若 source != target，构建学生 XML 并写回目标学院 /students/import
+    #  3. 构建选课 XML 并写回目标学院 /enrollments/import（跨院）
+    #     或调用目标学院 /enroll（本院）
+    #  4. 返回统一 JSON { status, message, steps }
     # ================================================================
     def _handle_enroll(self):
         body = self._read_body()
@@ -374,22 +377,21 @@ class IntegrationHandler(BaseHTTPRequestHandler):
                 "snm": form.get("snm", ""),
                 "sex": form.get("sex", ""),
                 "sde": form.get("sde", ""),
-                "source_college": form.get("source_college", "").upper(),
+                "source_college": form.get("source_college", ""),
                 "cno": form.get("cno", ""),
                 "cnm": form.get("cnm", ""),
-                "target_college": form.get("target_college", "").upper(),
+                "target_college": form.get("target_college", ""),
             }
 
         sno = data.get("sno", "")
         snm = data.get("snm", "")
         sex = data.get("sex", "")
         sde = data.get("sde", "")
-        source = data.get("source_college", "")
+        source = data.get("source_college", "").upper()
         cno = data.get("cno", "")
         cnm = data.get("cnm", "")
-        target = data.get("target_college", "")
+        target = data.get("target_college", "").upper()
 
-        # 参数验证
         if not all([sno, snm, source, cno, target]):
             self._send_json({
                 "status": "fail",
@@ -401,56 +403,106 @@ class IntegrationHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "fail", "message": "无效的学院"}, 400)
             return
 
-        # 如果是本院选课，直接转发
-        if source == target:
-            client = registry.get(target)
-            result = client.enroll(sno, cno)
-            self._send_json(result)
-            return
-
-        # 跨院选课流程
-        print(f"[Integration] 跨院选课: 学生 {sno}({source}) -> 课程 {cno}({target})")
         steps = []
+        is_cross = source != target
 
-        target_client = registry.get(target)
-        source_client = registry.get(source)
+        try:
+            source_client = registry.get(source)
+            target_client = registry.get(target)
+            if not source_client or not target_client:
+                self._send_json({"status": "fail", "message": "无效的学院"}, 400)
+                return
 
-        # Step 1: 检查目标学院是否在线
-        target_status = target_client.check_status()
-        if not target_status.get("online"):
-            self._send_json({"status": "fail", "message": f"目标学院{target}服务器不可用"}, 503)
-            return
+            print(f"[Integration] {'跨院' if is_cross else '本院'}选课: "
+                  f"学生 {sno}({source}) -> 课程 {cno}({target})")
 
-        # Step 2: 验证学生存在于源学院
-        source_status = source_client.check_status()
-        if not source_status.get("online"):
-            self._send_json({"status": "fail", "message": f"源学院{source}服务器不可用"}, 503)
-            return
+            # Step 1: 检查源学院与目标学院是否在线
+            source_status = source_client.check_status()
+            steps.append({"step": "check_source_college", "result": source_status})
+            if not source_status.get("online"):
+                self._send_json({
+                    "status": "fail",
+                    "message": f"源学院{source}服务器不可用",
+                    "steps": steps,
+                }, 503)
+                return
 
-        # Step 3: 将学生信息导入目标学院
-        import_result = target_client.import_student(sno, snm, sex, sde)
-        steps.append({"step": "import_student", "result": import_result})
-        print(f"[Integration] 学生导入结果: {import_result}")
+            target_status = target_client.check_status()
+            steps.append({"step": "check_target_college", "result": target_status})
+            if not target_status.get("online"):
+                self._send_json({
+                    "status": "fail",
+                    "message": f"目标学院{target}服务器不可用",
+                    "steps": steps,
+                }, 503)
+                return
 
-        # Step 4: 在目标学院创建选课记录
-        enroll_result = target_client.enroll(sno, cno)
-        steps.append({"step": "enroll", "result": enroll_result})
-        print(f"[Integration] 选课结果: {enroll_result}")
+            # Step 2: 跨院时构建学生 XML 并写回目标学院
+            if is_cross:
+                student_xml = build_student_xml({
+                    "sno": sno, "snm": snm, "sex": sex, "sde": sde,
+                })
+                print(f"[Integration] 学生 XML 写回:\n{student_xml}")
+                import_result = target_client.import_student_xml(student_xml)
+                steps.append({
+                    "step": "import_student",
+                    "format": "xml",
+                    "result": import_result,
+                })
+                print(f"[Integration] 学生导入结果: {import_result}")
+                if import_result.get("status") != "success":
+                    self._send_json({
+                        "status": "fail",
+                        "message": f"学生导入失败: {import_result.get('message', '未知错误')}",
+                        "steps": steps,
+                    }, 400)
+                    return
 
-        if enroll_result.get("status") == "success":
-            self._send_json({
-                "status": "success",
-                "message": f"跨院选课成功: 学生{sno}已选修学院{target}的课程{cnm or cno}",
-                "source_college": source,
-                "target_college": target,
-                "steps": steps,
-            })
-        else:
+            # Step 3: 在目标学院创建选课记录
+            if is_cross:
+                enroll_xml = build_enrollment_xml({"sno": sno, "cno": cno})
+                print(f"[Integration] 选课 XML 写回:\n{enroll_xml}")
+                enroll_result = target_client.import_enrollment_xml(enroll_xml)
+                steps.append({
+                    "step": "import_enrollment",
+                    "format": "xml",
+                    "result": enroll_result,
+                })
+            else:
+                enroll_result = target_client.enroll(sno, cno)
+                steps.append({"step": "enroll", "result": enroll_result})
+            print(f"[Integration] 选课结果: {enroll_result}")
+
+            if enroll_result.get("status") == "success":
+                if is_cross:
+                    message = "跨院选课成功"
+                    if cnm or cno:
+                        message = f"跨院选课成功: 学生{sno}已选修学院{target}的课程{cnm or cno}"
+                else:
+                    message = enroll_result.get("message", "选课成功")
+                resp = {
+                    "status": "success",
+                    "message": message,
+                    "steps": steps,
+                }
+                if is_cross:
+                    resp["source_college"] = source
+                    resp["target_college"] = target
+                self._send_json(resp)
+            else:
+                self._send_json({
+                    "status": "fail",
+                    "message": f"选课失败: {enroll_result.get('message', '未知错误')}",
+                    "steps": steps,
+                }, 400)
+
+        except Exception as e:
+            print(f"[Integration] 选课异常: {e}")
             self._send_json({
                 "status": "fail",
-                "message": f"选课失败: {enroll_result.get('message', '未知错误')}",
+                "message": f"选课失败: {e}",
                 "steps": steps,
-            }, 400)
+            }, 500)
 
     # ================================================================
     # POST /api/drop — 跨院退选
@@ -471,7 +523,7 @@ class IntegrationHandler(BaseHTTPRequestHandler):
 
         sno = data.get("sno", "")
         cno = data.get("cno", "")
-        target = data.get("target_college", "")
+        target = data.get("target_college", "").upper()
 
         if not all([sno, cno, target]):
             self._send_json({
@@ -484,59 +536,118 @@ class IntegrationHandler(BaseHTTPRequestHandler):
             self._send_json({"status": "fail", "message": "无效的学院"}, 400)
             return
 
-        client = registry.get(target)
-        status = client.check_status()
-        if not status.get("online"):
-            self._send_json({"status": "fail", "message": f"学院{target}服务器不可用"}, 503)
-            return
+        try:
+            client = registry.get_client(target)
+            if not client:
+                self._send_json({"status": "fail", "message": f"无效的学院: {target}"}, 400)
+                return
 
-        result = client.drop(sno, cno)
-        if result.get("status") == "success":
-            result["message"] = f"退选成功: 学生{sno}已退选学院{target}的课程{cno}"
-        self._send_json(result)
+            status = client.check_status()
+            if not status.get("online"):
+                self._send_json({"status": "fail", "message": f"学院{target}服务器不可用"}, 503)
+                return
+
+            print(f"[Integration] 跨院退选: 学生 {sno} -> 课程 {cno}({target})")
+
+            result = client.drop(sno, cno)
+            if result.get("status") == "success":
+                self._send_json({
+                    "status": "success",
+                    "message": "退课成功",
+                })
+            else:
+                self._send_json({
+                    "status": "fail",
+                    "message": f"退课失败: {result.get('message', '未知错误')}",
+                }, 400)
+        except Exception as e:
+            print(f"[Integration] 退课异常: {e}")
+            self._send_json({
+                "status": "fail",
+                "message": f"退课失败: {e}",
+            }, 500)
 
     # ================================================================
     # GET /api/statistics — 全局统计
     # ================================================================
     def _handle_statistics(self):
         """聚合所有学院的统计数据"""
-        total_students = 0
-        total_courses = 0
-        total_selections = 0
-        college_details = []
-        online_count = 0
+        students_total = 0
+        courses_total = 0
+        enrollments_total = 0
+        details = {}
 
-        for cid, info in COLLEGES.items():
-            client = registry.get(cid)
-            status = client.check_status()
-            detail = {
-                "college_id": cid,
-                "college_name": info["name"],
-                "dbms": info["dbms"],
-                "online": status.get("online", False),
-                "students": status.get("students", 0),
-                "courses": status.get("courses", 0),
-                "selections": status.get("selections", 0),
-            }
+        try:
+            for client in registry.all():
+                cid = client.college_id
+                info = COLLEGES.get(cid, {})
+                detail = {
+                    "college_id": cid,
+                    "college_name": info.get("name", client.name),
+                    "dbms": info.get("dbms", client.dbms),
+                    "online": False,
+                    "students": 0,
+                    "courses": 0,
+                    "enrollments": 0,
+                }
 
-            if status.get("online"):
-                online_count += 1
-                total_students += status.get("students", 0)
-                total_courses += status.get("courses", 0)
-                total_selections += status.get("selections", 0)
+                try:
+                    status = client.check_status()
+                    detail["online"] = status.get("online", False)
 
-            college_details.append(detail)
+                    if not detail["online"]:
+                        detail["error"] = status.get("error", "服务器不可用")
+                        details[cid] = detail
+                        continue
 
-        self._send_json({
-            "summary": {
-                "total_students": total_students,
-                "total_courses": total_courses,
-                "total_selections": total_selections,
-                "colleges_online": online_count,
-                "colleges_total": len(COLLEGES),
-            },
-            "details": college_details,
-        })
+                    students_xml = client.get_students()
+                    courses_xml = client.get_courses()
+                    enrollments_xml = client.get_enrollments()
+
+                    errors = []
+                    if students_xml:
+                        detail["students"] = len(parse_students_xml(students_xml, cid))
+                    else:
+                        errors.append("获取学生数据失败")
+
+                    if courses_xml:
+                        detail["courses"] = len(parse_courses_xml(courses_xml, cid))
+                    else:
+                        errors.append("获取课程数据失败")
+
+                    if enrollments_xml:
+                        detail["enrollments"] = count_enrollments_xml(enrollments_xml)
+                    else:
+                        errors.append("获取选课数据失败")
+
+                    if errors:
+                        detail["error"] = "；".join(errors)
+
+                    students_total += detail["students"]
+                    courses_total += detail["courses"]
+                    enrollments_total += detail["enrollments"]
+
+                except Exception as e:
+                    print(f"[Integration] 统计学院{cid}异常: {e}")
+                    detail["error"] = str(e)
+
+                details[cid] = detail
+
+            self._send_json({
+                "students_total": students_total,
+                "courses_total": courses_total,
+                "enrollments_total": enrollments_total,
+                "details": details,
+            })
+        except Exception as e:
+            print(f"[Integration] 全局统计异常: {e}")
+            self._send_json({
+                "students_total": students_total,
+                "courses_total": courses_total,
+                "enrollments_total": enrollments_total,
+                "details": details,
+                "error": str(e),
+            }, 500)
 
     # ================================================================
     # GET /api/transcript — 成绩单
@@ -718,10 +829,12 @@ async function loadStatistics() {
   const r = await api('/api/statistics');
   if (!r.ok) return;
   const d = JSON.parse(r.text);
-  $('onlineCount').textContent = d.summary.colleges_online + '/' + d.summary.colleges_total;
-  $('totalStudents').textContent = d.summary.total_students;
-  $('totalCourses').textContent = d.summary.total_courses;
-  $('totalSelections').textContent = d.summary.total_selections;
+  const colleges = Object.values(d.details || {});
+  const onlineCount = colleges.filter(c => c.online).length;
+  $('onlineCount').textContent = onlineCount + '/' + colleges.length;
+  $('totalStudents').textContent = d.students_total;
+  $('totalCourses').textContent = d.courses_total;
+  $('totalSelections').textContent = d.enrollments_total;
 }
 async function loadSharedCourses() {
   const r = await api('/api/courses/shared');

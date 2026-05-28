@@ -183,13 +183,26 @@
 }
 ```
 
-**响应:**
+**成功响应:**
 ```json
 {
   "status": "success",
-  "message": "退选成功: 学生S001已退选学院B的课程C001"
+  "message": "退课成功"
 }
 ```
+
+**失败响应示例:**
+```json
+{
+  "status": "fail",
+  "message": "学院B服务器不可用"
+}
+```
+
+**流程:**
+1. 验证 `sno`、`cno`、`target_college` 参数
+2. 检查目标学院是否在线
+3. 调用目标学院 `POST /x/drop` 删除选课记录
 
 ---
 
@@ -197,23 +210,61 @@
 
 ### GET /api/statistics — 全局统计
 
-聚合所有学院的统计数据。
+遍历所有学院客户端，分别拉取学生、课程、选课 XML 并汇总统计。某学院离线或部分数据获取失败时，不影响其他学院的统计结果。
+
+**数据来源（各学院）:**
+- `GET /x/students` — 学生列表
+- `GET /x/courses` — 课程列表
+- `GET /x/selections/xml` — 选课记录
 
 **响应:**
 ```json
 {
-  "summary": {
-    "total_students": 150,
-    "total_courses": 30,
-    "total_selections": 750,
-    "colleges_online": 3,
-    "colleges_total": 3
-  },
-  "details": [
-    { "college_id": "A", "college_name": "学院A", "dbms": "SQL Server", "online": true, "students": 50, "courses": 10, "selections": 250 }
-  ]
+  "students_total": 150,
+  "courses_total": 30,
+  "enrollments_total": 750,
+  "details": {
+    "A": {
+      "college_id": "A",
+      "college_name": "学院A",
+      "dbms": "SQL Server",
+      "online": true,
+      "students": 50,
+      "courses": 10,
+      "enrollments": 250
+    },
+    "B": {
+      "college_id": "B",
+      "college_name": "学院B",
+      "dbms": "Oracle",
+      "online": true,
+      "students": 50,
+      "courses": 10,
+      "enrollments": 250
+    },
+    "C": {
+      "college_id": "C",
+      "college_name": "学院C",
+      "dbms": "MySQL",
+      "online": false,
+      "students": 0,
+      "courses": 0,
+      "enrollments": 0,
+      "error": "无法连接"
+    }
+  }
 }
 ```
+
+**字段说明:**
+| 字段 | 说明 |
+|------|------|
+| `students_total` | 在线学院学生总数之和 |
+| `courses_total` | 在线学院课程总数之和 |
+| `enrollments_total` | 在线学院选课总数之和 |
+| `details` | 各学院明细，键为学院 ID（A/B/C） |
+| `details.*.enrollments` | 该学院选课记录数 |
+| `details.*.error` | 可选，离线或部分数据获取失败时的错误信息 |
 
 ---
 
@@ -254,6 +305,8 @@
 | `/x/shared-courses` | GET | 共享课程（XML） |
 | `/x/students` | GET | 学生列表（XML） |
 | `/x/students/xml` | GET | 学生数据（标准集成格式） |
+| `/x/courses/xml` | GET | 课程数据（标准集成格式） |
+| `/x/selections/xml` | GET | 选课数据（标准集成格式，统计模块使用） |
 | `/x/enroll` | POST | 选课 |
 | `/x/drop` | POST | 退课 |
 | `/x/transcript` | GET | 成绩单 |

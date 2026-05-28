@@ -51,6 +51,28 @@ class CollegeClient:
             print(f"[Client] POST {url} 失败: {e}")
             return None
 
+    def _post_xml(self, key, xml_str):
+        """POST XML 到指定端点并解析 JSON 响应"""
+        url = self._url(key)
+        if not url:
+            return {"status": "fail", "message": "端点未配置"}
+        if not xml_str or not str(xml_str).strip():
+            return {"status": "fail", "message": "XML 内容为空"}
+        try:
+            r = requests.post(
+                url,
+                data=xml_str.encode("utf-8"),
+                headers={"Content-Type": "application/xml; charset=utf-8"},
+                timeout=HTTP_TIMEOUT,
+            )
+            try:
+                return r.json()
+            except ValueError:
+                return {"status": "fail", "message": "响应格式错误"}
+        except requests.RequestException as e:
+            print(f"[Client] POST {url} 失败: {e}")
+            return {"status": "fail", "message": f"请求失败: {e}"}
+
     # ---- 状态 ----
 
     def check_status(self):
@@ -128,6 +150,13 @@ class CollegeClient:
             return r.text
         return None
 
+    def get_enrollments(self):
+        """获取选课记录（XML）"""
+        r = self._get("selections_xml")
+        if r and r.status_code == 200:
+            return r.text
+        return None
+
     # ---- 选课/退课 ----
 
     def enroll(self, sid, cid):
@@ -139,6 +168,31 @@ class CollegeClient:
             except ValueError:
                 return {"status": "fail", "message": "响应格式错误"}
         return {"status": "fail", "message": "服务器不可用"}
+
+    def enroll_course(self, enroll_data):
+        """在目标学院创建选课记录（字典参数）"""
+        url = self._url("enroll")
+        if not url:
+            return {"status": "fail", "message": "端点未配置"}
+        if not isinstance(enroll_data, dict):
+            return {"status": "fail", "message": "参数格式错误，需要字典类型"}
+        sno = enroll_data.get("sno", "")
+        cno = enroll_data.get("cno", "")
+        if not sno or not cno:
+            return {"status": "fail", "message": "缺少学号或课程号"}
+        try:
+            r = requests.post(
+                url,
+                data={"sid": sno, "cid": cno},
+                timeout=HTTP_TIMEOUT,
+            )
+            try:
+                return r.json()
+            except ValueError:
+                return {"status": "fail", "message": "响应格式错误"}
+        except requests.RequestException as e:
+            print(f"[Client] POST {url} 失败: {e}")
+            return {"status": "fail", "message": f"请求失败: {e}"}
 
     def drop(self, sid, cid):
         """退课"""
@@ -173,8 +227,20 @@ class CollegeClient:
 
     # ---- 跨院数据导入 ----
 
-    def import_student(self, sno, snm, sex, sde, pwd=None):
-        """将学生信息导入到目标学院（跨院选课前调用）"""
+    def import_student(self, student_data, snm=None, sex=None, sde=None, pwd=None):
+        """将学生信息导入到目标学院（跨院选课前调用）
+
+        支持两种调用方式:
+          import_student({"sno": "S001", "snm": "张三", "sex": "男", "sde": "计算机科学"})
+          import_student("S001", "张三", "男", "计算机科学")
+        """
+        if isinstance(student_data, dict):
+            payload = dict(student_data)
+            if "pwd" not in payload and payload.get("sno"):
+                payload.setdefault("pwd", payload["sno"])
+            return self._post_import_student(payload)
+
+        sno = student_data
         data = {"sno": sno, "snm": snm, "sex": sex, "sde": sde, "pwd": pwd or sno}
         r = self._post("import_student", json_data=data)
         if r:
@@ -183,6 +249,23 @@ class CollegeClient:
             except ValueError:
                 return {"status": "fail"}
         return {"status": "fail", "message": "服务器不可用"}
+
+    def _post_import_student(self, student_data):
+        """POST /students/import 并返回 JSON 响应（字典参数）"""
+        url = self._url("import_student")
+        if not url:
+            return {"status": "fail", "message": "端点未配置"}
+        if not student_data.get("sno") or not student_data.get("snm"):
+            return {"status": "fail", "message": "缺少学号或姓名"}
+        try:
+            r = requests.post(url, json=student_data, timeout=HTTP_TIMEOUT)
+            try:
+                return r.json()
+            except ValueError:
+                return {"status": "fail", "message": "响应格式错误"}
+        except requests.RequestException as e:
+            print(f"[Client] POST {url} 失败: {e}")
+            return {"status": "fail", "message": f"请求失败: {e}"}
 
     def import_enrollment(self, sno, cno, grd=""):
         """将选课记录导入到目标学院"""
@@ -193,6 +276,14 @@ class CollegeClient:
             except ValueError:
                 return {"status": "fail"}
         return {"status": "fail", "message": "服务器不可用"}
+
+    def import_student_xml(self, xml_str):
+        """通过 XML 将学生信息导入目标学院（跨院选课 XML 写回）"""
+        return self._post_xml("import_student", xml_str)
+
+    def import_enrollment_xml(self, xml_str):
+        """通过 XML 将选课记录导入目标学院（跨院选课 XML 写回）"""
+        return self._post_xml("import_enrollment", xml_str)
 
 
 class CollegeRegistry:
@@ -205,6 +296,10 @@ class CollegeRegistry:
 
     def get(self, college_id):
         return self._clients.get(college_id)
+
+    def get_client(self, college_id):
+        """获取指定学院的客户端（get 的别名）"""
+        return self.get(college_id)
 
     def all(self):
         return list(self._clients.values())

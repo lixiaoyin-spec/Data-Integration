@@ -314,26 +314,51 @@ public class BLocalServer {
             return;
         }
         String body = readBody(exchange.getRequestBody());
-        Map<String, String> data = parseJson(body);
-        String sno = data.getOrDefault("sno", "");
-        String snm = data.getOrDefault("snm", "");
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (contentType == null) {
+            contentType = "";
+        }
+
+        Map<String, String> data;
+        try {
+            if (contentType.contains("xml") || body.trim().startsWith("<")) {
+                data = parseStudentXml(body);
+            } else if (contentType.contains("json") || body.trim().startsWith("{")) {
+                data = parseJson(body);
+            } else {
+                data = parseForm(body);
+            }
+        } catch (Exception e) {
+            sendText(exchange, 400, jsonError("请求体解析失败: " + e.getMessage()), "application/json; charset=UTF-8");
+            return;
+        }
+
+        String sno = firstNonEmpty(data, "sno", "id", "sid");
+        String snm = firstNonEmpty(data, "snm", "name", "sname");
         String sex = data.getOrDefault("sex", "");
-        String sde = data.getOrDefault("sde", "");
-        String pwd = data.getOrDefault("pwd", sno);
+        String sde = firstNonEmpty(data, "sde", "major");
+        String pwd = firstNonEmpty(data, "pwd", "password");
+        if (pwd.isEmpty()) {
+            pwd = sno;
+        }
+
         if (sno.isEmpty() || snm.isEmpty()) {
             sendText(exchange, 400, "{\"status\":\"fail\",\"message\":\"缺少必要参数: sno, snm\"}", "application/json; charset=UTF-8");
             return;
         }
+
         try {
             repository.importStudent(sno, snm, sex, sde, pwd);
-            sendText(exchange, 200, "{\"status\":\"success\",\"message\":\"学生导入成功\"}", "application/json; charset=UTF-8");
+            sendText(exchange, 200, "{\"status\":\"success\"}", "application/json; charset=UTF-8");
         } catch (SQLException e) {
             String msg = e.getMessage();
             if (msg != null && (msg.contains("ORA-00001") || msg.contains("unique constraint"))) {
-                sendText(exchange, 200, "{\"status\":\"success\",\"message\":\"学生已存在，跳过导入\"}", "application/json; charset=UTF-8");
+                sendText(exchange, 200, "{\"status\":\"success\"}", "application/json; charset=UTF-8");
             } else {
                 sendText(exchange, 500, jsonError(msg), "application/json; charset=UTF-8");
             }
+        } catch (Exception e) {
+            sendText(exchange, 500, jsonError(e.getMessage()), "application/json; charset=UTF-8");
         }
     }
 
@@ -343,23 +368,44 @@ public class BLocalServer {
             return;
         }
         String body = readBody(exchange.getRequestBody());
-        Map<String, String> data = parseJson(body);
-        String sno = data.getOrDefault("sno", "");
-        String cno = data.getOrDefault("cno", "");
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (contentType == null) {
+            contentType = "";
+        }
+
+        Map<String, String> data;
+        try {
+            if (contentType.contains("xml") || body.trim().startsWith("<")) {
+                data = parseEnrollmentXml(body);
+            } else if (contentType.contains("json") || body.trim().startsWith("{")) {
+                data = parseJson(body);
+            } else {
+                data = parseForm(body);
+            }
+        } catch (Exception e) {
+            sendText(exchange, 400, jsonError("请求体解析失败: " + e.getMessage()), "application/json; charset=UTF-8");
+            return;
+        }
+
+        String sno = firstNonEmpty(data, "sno", "sid");
+        String cno = firstNonEmpty(data, "cno", "cid");
         if (sno.isEmpty() || cno.isEmpty()) {
             sendText(exchange, 400, "{\"status\":\"fail\",\"message\":\"缺少必要参数: sno, cno\"}", "application/json; charset=UTF-8");
             return;
         }
+
         try {
-            repository.importEnrollment(sno, cno);
-            sendText(exchange, 200, "{\"status\":\"success\",\"message\":\"选课导入成功\"}", "application/json; charset=UTF-8");
+            repository.importEnrollmentSkipExisting(sno, cno);
+            sendText(exchange, 200, "{\"status\":\"success\"}", "application/json; charset=UTF-8");
         } catch (SQLException e) {
             String msg = e.getMessage();
-            if (msg != null && msg.contains("ORA-00001")) {
-                sendText(exchange, 200, "{\"status\":\"success\",\"message\":\"选课记录已存在\"}", "application/json; charset=UTF-8");
+            if (msg != null && (msg.contains("ORA-00001") || msg.contains("unique constraint"))) {
+                sendText(exchange, 200, "{\"status\":\"success\"}", "application/json; charset=UTF-8");
             } else {
                 sendText(exchange, 500, jsonError(msg), "application/json; charset=UTF-8");
             }
+        } catch (Exception e) {
+            sendText(exchange, 500, jsonError(e.getMessage()), "application/json; charset=UTF-8");
         }
     }
 
@@ -411,6 +457,63 @@ public class BLocalServer {
             map.put(m.group(1), m.group(2));
         }
         return map;
+    }
+
+    private static Map<String, String> parseStudentXml(String body) {
+        Map<String, String> map = new HashMap<>();
+        if (body == null || body.isEmpty()) {
+            return map;
+        }
+        map.put("sno", extractXmlTag(body, "sno", "id", "sid"));
+        map.put("snm", extractXmlTag(body, "snm", "name", "sname"));
+        map.put("sex", extractXmlTag(body, "sex"));
+        map.put("sde", extractXmlTag(body, "sde", "major"));
+        map.put("pwd", extractXmlTag(body, "pwd", "password"));
+        return map;
+    }
+
+    private static Map<String, String> parseEnrollmentXml(String body) {
+        Map<String, String> map = new HashMap<>();
+        if (body == null || body.isEmpty()) {
+            return map;
+        }
+        map.put("sno", extractXmlTag(body, "sno", "sid"));
+        map.put("cno", extractXmlTag(body, "cno", "cid"));
+        return map;
+    }
+
+    private static String extractXmlTag(String xml, String... tags) {
+        for (String tag : tags) {
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                    "<" + tag + ">\\s*([^<]*)\\s*</" + tag + ">",
+                    java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL
+            ).matcher(xml);
+            if (matcher.find()) {
+                return unescapeXml(matcher.group(1).trim());
+            }
+        }
+        return "";
+    }
+
+    private static String firstNonEmpty(Map<String, String> map, String... keys) {
+        for (String key : keys) {
+            String value = map.get(key);
+            if (value != null && !value.isEmpty()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private static String unescapeXml(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("&apos;", "'")
+                .replace("&quot;", "\"")
+                .replace("&gt;", ">")
+                .replace("&lt;", "<")
+                .replace("&amp;", "&");
     }
 
     private static String urlDecode(String value) {
@@ -742,6 +845,22 @@ public class BLocalServer {
 
         public void importEnrollment(String sno, String cno) throws SQLException {
             enrollCourse(sno, cno);
+        }
+
+        public void importEnrollmentSkipExisting(String sno, String cno) throws SQLException {
+            try (Connection conn = getConnection()) {
+                String checkSql = "SELECT COUNT(*) FROM B_ENROLLMENT WHERE SID = ? AND CID = ?";
+                try (PreparedStatement ps = conn.prepareStatement(checkSql)) {
+                    ps.setString(1, sno);
+                    ps.setString(2, cno);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next() && rs.getInt(1) > 0) {
+                            return;
+                        }
+                    }
+                }
+                enrollCourse(sno, cno);
+            }
         }
 
         public String getCounts() throws SQLException {
