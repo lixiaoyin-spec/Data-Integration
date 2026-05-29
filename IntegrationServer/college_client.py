@@ -6,6 +6,10 @@ import json
 import requests
 from config import COLLEGES, HTTP_TIMEOUT
 
+# 禁用系统代理，避免通过代理访问本地服务失败
+_SESSION = requests.Session()
+_SESSION.trust_env = False
+
 
 class CollegeClient:
     """与单个学院服务器通信的客户端"""
@@ -19,6 +23,7 @@ class CollegeClient:
         self.dbms = info["dbms"]
         self.base_url = info["base_url"].rstrip("/")
         self.endpoints = info["endpoints"]
+        self._session = _SESSION
 
     def _url(self, key):
         ep = self.endpoints.get(key)
@@ -31,7 +36,7 @@ class CollegeClient:
         if not url:
             return None
         try:
-            r = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
+            r = self._session.get(url, params=params, timeout=HTTP_TIMEOUT)
             return r
         except requests.RequestException as e:
             print(f"[Client] GET {url} 失败: {e}")
@@ -43,9 +48,9 @@ class CollegeClient:
             return None
         try:
             if json_data:
-                r = requests.post(url, json=json_data, timeout=HTTP_TIMEOUT)
+                r = self._session.post(url, json=json_data, timeout=HTTP_TIMEOUT)
             else:
-                r = requests.post(url, data=data, timeout=HTTP_TIMEOUT)
+                r = self._session.post(url, data=data, timeout=HTTP_TIMEOUT)
             return r
         except requests.RequestException as e:
             print(f"[Client] POST {url} 失败: {e}")
@@ -59,7 +64,7 @@ class CollegeClient:
         if not xml_str or not str(xml_str).strip():
             return {"status": "fail", "message": "XML 内容为空"}
         try:
-            r = requests.post(
+            r = self._session.post(
                 url,
                 data=xml_str.encode("utf-8"),
                 headers={"Content-Type": "application/xml; charset=utf-8"},
@@ -181,7 +186,7 @@ class CollegeClient:
         if not sno or not cno:
             return {"status": "fail", "message": "缺少学号或课程号"}
         try:
-            r = requests.post(
+            r = self._session.post(
                 url,
                 data={"sid": sno, "cid": cno},
                 timeout=HTTP_TIMEOUT,
@@ -258,7 +263,7 @@ class CollegeClient:
         if not student_data.get("sno") or not student_data.get("snm"):
             return {"status": "fail", "message": "缺少学号或姓名"}
         try:
-            r = requests.post(url, json=student_data, timeout=HTTP_TIMEOUT)
+            r = self._session.post(url, json=student_data, timeout=HTTP_TIMEOUT)
             try:
                 return r.json()
             except ValueError:

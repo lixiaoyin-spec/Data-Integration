@@ -4,54 +4,55 @@
 功能：登录、系统状态、课程管理、学生管理、跨院选课、跨院退选、统计、成绩单查询
 """
 import os
-import sys
 import json
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-from urllib.request import urlopen, Request
-from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
+from http.client import HTTPConnection
 import xml.dom.minidom as minidom
 
-INTEGRATION_URL = "http://localhost:8000"
+INTEGRATION_HOST = "127.0.0.1"
+INTEGRATION_PORT = 8000
+
+
+def _http_request(method, path, body=None, headers=None):
+    """使用 http.client 直连，完全不经过代理"""
+    hdrs = {"Accept": "application/json"}
+    if headers:
+        hdrs.update(headers)
+    if body:
+        hdrs.setdefault("Content-Type", "application/x-www-form-urlencoded")
+
+    conn = HTTPConnection(INTEGRATION_HOST, INTEGRATION_PORT, timeout=10)
+    try:
+        conn.request(method, path, body=body, headers=hdrs)
+        resp = conn.getresponse()
+        return resp.status, resp.read().decode("utf-8")
+    except Exception as e:
+        return None, str(e)
+    finally:
+        conn.close()
 
 
 def api_get(path, params=None):
     """调用集成服务器 GET API"""
-    url = f"{INTEGRATION_URL}{path}"
+    url_path = path
     if params:
-        qs = urlencode(params)
-        url = f"{url}?{qs}"
-    req = Request(url, headers={"Accept": "application/json"})
-    try:
-        with urlopen(req, timeout=10) as resp:
-            return resp.status, resp.read().decode("utf-8")
-    except URLError as e:
-        return None, str(e)
+        url_path = f"{path}?{urlencode(params)}"
+    return _http_request("GET", url_path)
 
 
 def api_post(path, data=None, json_data=None):
     """调用集成服务器 POST API"""
-    url = f"{INTEGRATION_URL}{path}"
     if json_data:
         body = json.dumps(json_data, ensure_ascii=False).encode("utf-8")
-        req = Request(url, data=body, headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        })
+        return _http_request("POST", path, body=body,
+                            headers={"Content-Type": "application/json"})
     elif data:
         body = urlencode(data).encode("utf-8")
-        req = Request(url, data=body, headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        })
+        return _http_request("POST", path, body=body)
     else:
-        req = Request(url, headers={"Accept": "application/json"})
-    try:
-        with urlopen(req, timeout=10) as resp:
-            return resp.status, resp.read().decode("utf-8")
-    except URLError as e:
-        return None, str(e)
+        return _http_request("POST", path)
 
 
 def fmt_json(text):

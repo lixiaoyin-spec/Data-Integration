@@ -16,3 +16,8 @@ Thumbs.db
 *.zip
 *.rar
 *.tmp
+
+# Python
+__pycache__/
+*.pyc
+*.db

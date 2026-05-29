@@ -12,10 +12,21 @@
 """
 import sys
 import os
+
+# 必须在导入其他网络库之前清除代理环境变量
+for key in list(os.environ.keys()):
+    if key.upper() in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY'):
+        del os.environ[key]
+
 import json
 import argparse
 import xml.etree.ElementTree as ET
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """多线程HTTP服务器，防止单请求阻塞全部连接"""
+    daemon_threads = True
 from urllib.parse import urlparse, parse_qs, unquote_plus
 
 from config import INTEGRATION_SERVER, COLLEGES, MAX_COURSES_PER_STUDENT
@@ -47,12 +58,15 @@ class IntegrationHandler(BaseHTTPRequestHandler):
 
     def _send(self, body, content_type, code):
         data = body.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -82,7 +96,7 @@ class IntegrationHandler(BaseHTTPRequestHandler):
     # ---- 路由分发 ----
 
     def do_GET(self):
-        path = urlparse(self.path).path.rstrip("/")
+        path = urlparse(self.path).path.rstrip("/") or "/"
 
         routes = {
             "/":                  self._handle_dashboard,
@@ -102,7 +116,7 @@ class IntegrationHandler(BaseHTTPRequestHandler):
         handler()
 
     def do_POST(self):
-        path = urlparse(self.path).path.rstrip("/")
+        path = urlparse(self.path).path.rstrip("/") or "/"
 
         if path == "/api/login":
             return self._handle_login()
@@ -912,7 +926,7 @@ def main():
     host = INTEGRATION_SERVER["host"]
     port = args.port
 
-    server = HTTPServer((host, port), IntegrationHandler)
+    server = ThreadingHTTPServer((host, port), IntegrationHandler)
     print("=" * 55)
     print(f"  {INTEGRATION_SERVER['name']} v{INTEGRATION_SERVER['version']}")
     print(f"  地址: http://localhost:{port}")

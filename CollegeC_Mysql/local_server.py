@@ -451,6 +451,22 @@ h1{{color:#38bdf8}}h2{{color:#a78bfa;margin-top:30px}}ul{{line-height:2}}
             sex = data.get("sex", "")
             sde = data.get("sde", "")
             pwd = data.get("pwd", sno)
+        elif "application/xml" in content_type or "text/xml" in content_type:
+            # 解析 XML 格式的学生数据
+            try:
+                root = ET.fromstring(body)
+                stu = root if root.tag == "student" else root.find("student")
+                if stu is not None:
+                    sno = (_xml_text(stu, "id") or _xml_text(stu, "sno"))
+                    snm = (_xml_text(stu, "name") or _xml_text(stu, "snm"))
+                    sex = (_xml_text(stu, "sex"))
+                    sde = (_xml_text(stu, "major") or _xml_text(stu, "sde"))
+                    pwd = sno
+                else:
+                    sno = ""; snm = ""; sex = ""; sde = ""; pwd = ""
+            except ET.ParseError:
+                self._send_json({"status": "fail", "message": "XML解析失败"}, 400)
+                return
         else:
             form = self._parse_form(body)
             sno = form.get("sno", "")
@@ -498,6 +514,19 @@ h1{{color:#38bdf8}}h2{{color:#a78bfa;margin-top:30px}}ul{{line-height:2}}
             sno = data.get("sno", "")
             cno = data.get("cno", "")
             grd = data.get("grd", "")
+        elif "application/xml" in content_type or "text/xml" in content_type:
+            try:
+                root = ET.fromstring(body)
+                ch = root if root.tag == "choice" else root.find("choice")
+                if ch is not None:
+                    sno = (_xml_text(ch, "sid") or _xml_text(ch, "sno"))
+                    cno = (_xml_text(ch, "cid") or _xml_text(ch, "cno"))
+                    grd = (_xml_text(ch, "score") or _xml_text(ch, "grd"))
+                else:
+                    sno = ""; cno = ""; grd = ""
+            except ET.ParseError:
+                self._send_json({"status": "fail", "message": "XML解析失败"}, 400)
+                return
         else:
             form = self._parse_form(body)
             sno = form.get("sno", "")
@@ -527,6 +556,13 @@ h1{{color:#38bdf8}}h2{{color:#a78bfa;margin-top:30px}}ul{{line-height:2}}
 # ================================================================
 # XML 构建辅助
 # ================================================================
+
+def _xml_text(elem, tag):
+    child = elem.find(tag)
+    if child is not None and child.text:
+        return child.text.strip()
+    return ""
+
 
 def _build_courses_xml(rows):
     root = ET.Element("Classes")
