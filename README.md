@@ -1,8 +1,9 @@
 # 数据集成作业三 — 基于 XML 的异构数据集成系统
 
-**组号**: 27  
-**成员**: 6人（成员1-6，分工详见 `IntegrationServer/` 下各交付说明）  
+**组号**: 27 
+**成员**: 6人 
 **技术**: Python · Java · SQL Server · Oracle · MySQL · XML/XSD/XSLT
+**GitHub仓库链接：**[lixiaoyin-spec/Data-Integration: Data Integration Course Project, Grade 3, School of Software, Nanjing University](https://github.com/lixiaoyin-spec/Data-Integration)
 
 ---
 
@@ -184,20 +185,4 @@ python IntegrationServer/integration_gui.py
 
 ```powershell
 pip install requests pymysql
-```
-
----
-
-## 十、验收测试结果
-
-自动化测试：**23/24 通过**（2026-05-29）
-
-```
-A (SQL Server)   :8081    全部端点正常 ✅
-B (Oracle Mock)  :8082    全部端点正常 ✅  
-C (MySQL)        :8083    全部端点正常 ✅
-集成服务器        :8000    4/5通过 ✅
-跨院选课 A→B, B→C, C→A    全通 ✅
-跨院退选                    全通 ✅
-全局统计: 学生106，课程20，选课500
 ```
